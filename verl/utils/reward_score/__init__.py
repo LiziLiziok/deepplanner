@@ -22,7 +22,10 @@ import json
 import os
 logging.basicConfig(level=logging.INFO)
 
-def save_results_to_file(solution_str, ground_truths, res, data_source=None):
+
+# def _parse_extra_info(extra_info):
+
+def save_results_to_file(solution_str, ground_truths, res, data_source=None,extra_info=None):
     """Save the results to a file with a counter."""
     # Add a counter to the generation part; here just read the counter
     try:
@@ -153,11 +156,17 @@ def default_compute_score(
     ]:
         from . import search_r1_like_qa_em
 
-        res = search_r1_like_qa_em.compute_score(solution_str, ground_truth)
+        res = search_r1_like_qa_em.compute_score(solution_str, ground_truth,extra_info,data_source)
 
+    elif data_source.endswith("_val"):
+        from . import my_reward_final_answer
+        res = my_reward_final_answer.compute_score(solution_str, ground_truth,extra_info,data_source)
+    elif data_source.endswith("_train"):
+        from . import my_reward_final_answer
+        res = my_reward_final_answer.compute_score(solution_str, ground_truth,extra_info,data_source)
     else:
         raise NotImplementedError(f"Reward function is not implemented for {data_source=}")
-    save_results_to_file(solution_str, ground_truth, res, data_source)
+
     if isinstance(res, dict):
         return res
     elif isinstance(res, int | float | bool):
