@@ -33,7 +33,7 @@ from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopOutp
 from verl.tools.utils.tool_registry import initialize_tools_from_config
 from verl.utils.profiler import simple_timer
 
-caculate_stage = "planner"
+# caculate_stage = "planner"
 caculate_stage = "solver"
 
 
