@@ -159,3 +159,48 @@ class GptOssToolParser(ToolParser):
         content = regex.sub(self.tool_call_pattern, "", text)
 
         return content, function_calls
+
+
+@ToolParser.register("qwen")
+class QwenToolParser(ToolParser):
+    """Tool parser for Qwen2.5 model.
+    
+    Qwen2.5 uses a similar format to Hermes with <tool_call> tags.
+    The tool call format is:
+    <tool_call>
+    {"name": "function_name", "arguments": {"arg1": "value1"}}
+    </tool_call>
+    """
+
+    def __init__(self, tokenizer) -> None:
+        super().__init__(tokenizer)
+        self.tool_call_start_token: str = "<tool_call>"
+        self.tool_call_end_token: str = "</tool_call>"
+        self.tool_call_regex = regex.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", regex.DOTALL)
+
+    @rollout_trace_op
+    async def extract_tool_calls(self, responses_ids: list[int]) -> tuple[str, list[FunctionCall]]:
+        loop = asyncio.get_running_loop()
+        text = await loop.run_in_executor(None, self.tokenizer.decode, responses_ids)
+        
+        if self.tool_call_start_token not in text or self.tool_call_end_token not in text:
+            return text, []
+
+        matches = self.tool_call_regex.findall(text)
+        function_calls = []
+        for match in matches:
+            try:
+                function_call = json.loads(match.strip())
+                name = function_call.get("name", "")
+                arguments = function_call.get("arguments", {})
+                # Handle both string and dict arguments
+                if isinstance(arguments, dict):
+                    arguments = json.dumps(arguments, ensure_ascii=False)
+                function_calls.append(FunctionCall(name=name, arguments=arguments))
+            except Exception as e:
+                logger.error(f"Failed to decode tool call: {e}")
+
+        # Remove tool call tokens from content
+        content = self.tool_call_regex.sub("", text)
+
+        return content, function_calls
