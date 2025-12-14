@@ -18,7 +18,55 @@
 import random
 import re
 import string
+import json
+import os  
+import logging
+from . import my_reward_final_answer
+logging.basicConfig(level=logging.INFO)
+def save_results_to_file(res):
+    """Save the results to a file with a counter."""
+    # Add a counter to the generation part; here just read the counter
+    try:
+        # Create output directory
+        os.makedirs(os.path.dirname("./outputs/eval/"), exist_ok=True)
+        
+        count_file_path = "./outputs/eval/search_r1_count.txt"
+        current_count = 0
+        
+        # # Handle the counter file, read if it exists (usually it does)
+        if os.path.exists(count_file_path):
+            with open(count_file_path, 'r', encoding='utf-8') as f:
+                count_str = f.read().strip()
+                if count_str.isdigit():
+                    current_count = int(count_str)
+        else:
+             # Create a new counter file
+            with open(count_file_path, 'w', encoding='utf-8') as f:
+                f.write('0')
+                logging.info("Created new counter file: search_r1_count.txt")
 
+        # Save data to the new file
+        save_json = res        
+        # Generate the file name with the counter
+        json_file_path_test = f"./outputs/eval/search_r1_{current_count}.jsonl"
+        json_file_path_train = f"./outputs/eval/search_r1_{current_count}.jsonl"
+
+        json_line = json.dumps(save_json, ensure_ascii=False)
+        
+        # if data_source.endswith("_val"):
+        #     json_file_path = json_file_path_test
+        # else:
+        #     json_file_path = json_file_path_train
+        # Write to the JSONL file
+        with open(json_file_path_train, 'a', encoding='utf-8') as f:
+            f.write(json_line + '\n')
+            logging.info(f"File saved: {json_file_path_train}")
+        
+            
+    except (IOError, OSError) as e:
+        logging.error(f"File write failed: {e}")
+    except Exception as e:
+        logging.error(f"Unknown error: {e}")
 
 def normalize_answer(s):
     def remove_articles(text):
@@ -93,7 +141,7 @@ def count_answer_tags(text):
     return opening_tags, closing_tags
 
 
-def compute_score(solution_str, ground_truth, method="strict", format_score=0.0, score=1.0):
+def compute_score(solution_str, ground_truth,extra_info,data_source, method="strict", format_score=0.0, score=1.0):
     """The scoring function for exact match (EM).
 
     Args:
@@ -115,17 +163,36 @@ def compute_score(solution_str, ground_truth, method="strict", format_score=0.0,
         else:
             print("Extracted answer: None!")
         print(f"Solution string: {solution_str}")
-
+    return_score = 0
+    em = ""
     if answer is None:
-        return 0
+        return_score = 0
+        em = 0
+        f1 = 0
     else:
-        if em_check(answer, ground_truth["target"]):
+        em = em_check(answer, ground_truth["target"])
+        f1 = my_reward_final_answer.f1_check(answer, ground_truth["target"])
+        if em:
             if open_count > 10 or close_count > 10:  # prevent output a lot of </answer>
-                score = score / 4
-                return score
-            return score
+                return_score = score / 4
+            else:
+                return_score = score
         else:
-            return format_score
+            return_score = format_score
+    
+    res = {
+        "question": extra_info["question"],
+        "trajectory": extra_info["response_text"],
+        "solution_str": solution_str,
+        "ground_truth": ground_truth["target"],
+        "f1": f1,
+        "em": em,
+        "return_score": return_score,
+        "data_source": data_source,
+    }
+    save_results_to_file(res)
+    return return_score
+    
 
 
 def compute_score_subem(solution_str, ground_truth, method="strict", format_score=0.0, score=1.0):
