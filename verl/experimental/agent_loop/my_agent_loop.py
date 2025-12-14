@@ -35,8 +35,8 @@ from verl.utils.profiler import simple_timer
 import logging
 logger = logging.getLogger(__name__) 
 
-caculate_stage = "planner"
-# caculate_stage = "solver"
+# caculate_stage = "planner"
+caculate_stage = "solver"
 
 
 
@@ -285,18 +285,6 @@ class PlannerAgentLoop(AgentLoopBase):
         all_failed_sub_questions: list[dict] = None
     ) -> dict:
         """第一阶段：让模型分解问题为多个子问题
-        
-        Args:
-            failed_sub_questions: 之前失败的子问题列表，用于重试时提供更好的提示
-            
-        Returns:
-            dict: {
-                "sub_questions": list[str],  # 解析出的子问题列表
-                "prompt_ids": list[int],      # prompt token ids
-                "response_ids": list[int],    # response token ids
-                "log_probs": list[float],     # response log probabilities
-                "raw_planner_response": str,  # 原始模型输出文本
-            }
         """
         
         # 构造 Planner prompt
@@ -406,13 +394,6 @@ class PlannerAgentLoop(AgentLoopBase):
         kwargs: dict
     ) -> dict:
         """第二阶段：对单个子问题进行检索+推理
-        
-        Returns:
-            dict: {
-                "success": bool,  # 是否成功获得答案
-                "answer": str,    # 答案内容（成功时）
-                "reason": str     # 失败原因（失败时）
-            }
         """
         
         # 2.1 构造工具调用请求
