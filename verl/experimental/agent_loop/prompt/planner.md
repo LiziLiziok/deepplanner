@@ -196,7 +196,7 @@ ${all_successful_answers}
 Failed Decomposition:
 
 ```
-${failed_sub_questions}
+${all_failed_sub_questions}
 ```
 
 User Question:
