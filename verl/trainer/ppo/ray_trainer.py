@@ -59,6 +59,7 @@ from verl.utils.rollout_skip import RolloutSkip
 from verl.utils.seqlen_balancing import calculate_workload, get_seqlen_balanced_partitions, log_seqlen_unbalance
 from verl.utils.torch_functional import masked_mean
 from verl.utils.tracking import ValidationGenerationsLogger
+from verl.utils.entropy.confidence_score import compute_retrival_confidence
 
 
 @dataclass
@@ -186,6 +187,8 @@ def compute_advantage(
     num_repeat: int = 1,
     norm_adv_by_std_in_grpo: bool = True,
     config: Optional[AlgoConfig] = None,
+    use_retrival_entropy: bool = False,
+    tokenizer=None
 ) -> DataProto:
     """Compute advantage estimates for policy optimization.
 
@@ -237,7 +240,14 @@ def compute_advantage(
             index=data.non_tensor_batch["uid"],
             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
         )
-        data.batch["advantages"] = advantages
+        if use_retrival_entropy: # FIXME：唯一更改: advantage 添加系数
+            retrival_confidence = compute_retrival_confidence(data, tokenizer=tokenizer)
+            # print("retrival_confidence:",retrival_confidence)
+            retrival_confidence = torch.clamp(retrival_confidence, min=0.8, max=1) + 0.2 # 增大确定性的奖励, 不减少不确定性的奖励. 
+            data.batch['advantages'] = advantages * retrival_confidence
+        else:
+            data.batch['advantages'] = advantages      
+        # data.batch["advantages"] = advantages
         data.batch["returns"] = returns
     else:
         # handle all other adv estimator type other than GAE and GRPO
@@ -452,8 +462,16 @@ class RayPPOTrainer:
 
         with open(filename, "w") as f:
             f.write("\n".join(lines) + "\n")
+            
+        rank = int(os.getenv("RANK", 0))
+        p = f"/apdcephfs_szcf/share_303378293/hunyuan/eiraouyang/workplace/paper/verl/outputs/h_rank{rank}.jsonl"
 
-        print(f"Dumped generations to {filename}")
+        with open(p, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+            f.write("\n")
+        print(f"------------------------------------------------------------------------------------------------------")
+        print(f"--------------------------------------------------Dumped generations to {filename}----------------------------------------------------")
+        print(f"------------------------------------------------------------------------------------------------------")
 
     def _log_rollout_data(
         self, batch: DataProto, reward_extra_infos_dict: dict, timing_raw: dict, rollout_data_dir: str
@@ -1060,7 +1078,7 @@ class RayPPOTrainer:
 
                 is_last_step = self.global_steps >= self.total_training_steps
                 with marked_timer("step", timing_raw):
-                    # generate a batch
+                    # generate a batch,生成序列（关键步骤！多轮工具调用在这里发生）
                     with marked_timer("gen", timing_raw, color="red"):
                         if not self.async_rollout_mode:
                             gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch_output)
@@ -1113,7 +1131,7 @@ class RayPPOTrainer:
 
                     # compute global_valid tokens
                     batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
-
+                    # 4. 计算奖励
                     with marked_timer("reward", timing_raw, color="yellow"):
                         # compute reward model score
                         if self.use_rm and "rm_scores" not in batch.batch.keys():
@@ -1150,7 +1168,7 @@ class RayPPOTrainer:
                             entropy_agg = agg_loss(
                                 loss_mat=entropys,
                                 loss_mask=response_masks,
-                                loss_agg_mode=actor_config.loss_agg_mode,
+                                loss_agg_mode=actor_config.loss_agg_mode, 
                                 loss_scale_factor=actor_config.loss_scale_factor,
                             )
                             old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
@@ -1229,7 +1247,7 @@ class RayPPOTrainer:
                             config=self.config.algorithm,
                         )
 
-                    # update critic
+                    # update critic 更新模型
                     if self.use_critic:
                         with marked_timer("update_critic", timing_raw, color="pink"):
                             critic_output = self.critic_wg.update_critic(batch)
@@ -1238,7 +1256,8 @@ class RayPPOTrainer:
 
                     # implement critic warmup
                     if self.config.trainer.critic_warmup <= self.global_steps:
-                        # update actor
+                        # update actor更新模型
+
                         with marked_timer("update_actor", timing_raw, color="red"):
                             rollout_config = self.config.actor_rollout_ref.rollout
                             batch.meta_info["multi_turn"] = rollout_config.multi_turn.enable
@@ -1249,7 +1268,8 @@ class RayPPOTrainer:
                         metrics.update(actor_output_metrics)
 
                     # Log rollout generations if enabled
-                    rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
+                    p = "/apdcephfs_szcf/share_303378293/hunyuan/eiraouyang/workplace/paper/verl/outputs/test"
+                    rollout_data_dir = self.config.trainer.get("rollout_data_dir", p)
                     if rollout_data_dir:
                         self._log_rollout_data(batch, reward_extra_infos_dict, timing_raw, rollout_data_dir)
 
