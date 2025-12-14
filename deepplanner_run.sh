@@ -2,7 +2,7 @@
 # run on 8xH20
 # make sure your current working directory is the root of the project
 # 记得先配置 wandb login
-# 本脚本中，设置    trainer.val_before_train=True 以及 trainer.val_only=True ，只用于评测；如果训练，则删除这两个参数。
+# 本脚本中，设置    trainer.val_before_train=True 以及 trainer.val_only=True ，只用于评测；如果训练，请删除这两个参数。
 set -x
 
 ulimit -n 65535
