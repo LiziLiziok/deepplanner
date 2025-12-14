@@ -19,6 +19,10 @@ import argparse
 import json
 import warnings
 from typing import Optional
+import os
+from datetime import datetime
+import threading
+from pathlib import Path
 
 import datasets
 import faiss
@@ -29,6 +33,35 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
+import logging
+import time
+
+app = FastAPI()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ============== 日志存储配置 ==============
+LOG_DIR = "./logs/retrieval"
+log_file_lock = threading.Lock()  # 线程安全写入
+
+def get_log_file_path():
+    """获取当前日期的日志文件路径"""
+    date_str = datetime.now().strftime("%Y%m%d")
+    return os.path.join(LOG_DIR, f"retrieval_log_{date_str}.jsonl")
+
+def save_retrieval_log(log_entry: dict):
+    """将检索日志保存到JSONL文件"""
+    try:
+        # 确保日志目录存在
+        Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
+        
+        log_file = get_log_file_path()
+        with log_file_lock:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.error(f"Failed to save retrieval log: {e}")
+# ============== 日志存储配置结束 ==============
 
 
 def load_corpus(corpus_path: str):
@@ -351,27 +384,63 @@ def retrieve_endpoint(request: QueryRequest):
         ]
     }
     """
+    start_time = time.time()
+    logger.info(f"Received request with {len(request.queries)} queries, topk={request.topk}")
+    
     if not request.topk:
         request.topk = config.retrieval_topk  # fallback to default
 
-    # Perform batch retrieval
-    results, scores = retriever.batch_search(
-        query_list=request.queries, num=request.topk, return_score=request.return_scores
-    )
+    resp = None
+    error_msg = None
+    status = "success"
+    
+    try:
+        # Perform batch retrieval
+        results, scores = retriever.batch_search(
+            query_list=request.queries, num=request.topk, return_score=request.return_scores
+        )
 
-    # Format response
-    resp = []
-    for i, single_result in enumerate(results):
-        if request.return_scores:
-            # If scores are returned, combine them with results
-            combined = []
-            for doc, score in zip(single_result, scores[i], strict=True):
-                combined.append({"document": doc, "score": score})
-            resp.append(combined)
-        else:
-            resp.append(single_result)
+        # Format response
+        resp = []
+        for i, single_result in enumerate(results):
+            if request.return_scores:
+                # If scores are returned, combine them with results
+                combined = []
+                for doc, score in zip(single_result, scores[i], strict=True):
+                    combined.append({"document": doc, "score": score})
+                resp.append(combined)
+            else:
+                resp.append(single_result)
+    except Exception as e:
+        status = "failed"
+        error_msg = str(e)
+        logger.error(f"Retrieval failed: {error_msg}")
+    
+    # 计算总耗时
+    total_time = time.time() - start_time
+    logger.info(f"Request completed in {total_time:.2f}s, status={status}")
+    
+    # ============== 保存检索日志（无论成功或失败都保存） ==============
+    log_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "queries": request.queries,
+        "topk": request.topk,
+        "return_scores": request.return_scores,
+        "num_queries": len(request.queries),
+        "status": status,
+        "error": error_msg,
+        "results": resp,
+        "total_time_seconds": round(total_time, 4),
+    }
+    save_retrieval_log(log_entry)
+    # ============== 保存检索日志结束 ==============
+    
+    # 如果失败则抛出异常返回错误
+    if status == "failed":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Retrieval failed: {error_msg}")
+    
     return {"result": resp}
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Launch the local faiss retriever.")
@@ -384,7 +453,7 @@ if __name__ == "__main__":
         default="/home/peterjin/mnt/data/retrieval-corpus/wiki-18.jsonl",
         help="Local corpus file.",
     )
-    parser.add_argument("--topk", type=int, default=3, help="Number of retrieved passages for one query.")
+    parser.add_argument("--topk", type=int, default=5, help="Number of retrieved passages for one query.")
     parser.add_argument("--retriever_name", type=str, default="e5", help="Name of the retriever model.")
     parser.add_argument(
         "--retriever_model", type=str, default="intfloat/e5-base-v2", help="Path of the retriever model."
@@ -412,4 +481,4 @@ if __name__ == "__main__":
     retriever = get_retriever(config)
 
     # 3) Launch the server. By default, it listens on http://127.0.0.1:8000
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, timeout_keep_alive=300)
