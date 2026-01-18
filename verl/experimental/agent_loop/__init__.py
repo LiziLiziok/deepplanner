@@ -16,6 +16,7 @@ from .agent_loop import AgentLoopBase, AgentLoopManager, AgentLoopWorker, AsyncL
 from .single_turn_agent_loop import SingleTurnAgentLoop
 from .tool_agent_loop import ToolAgentLoop
 from .search_r1_agent_loop import SearchR1AgentLoop
+from .my_agent_loop import PlannerAgentLoop
 
 _ = [SingleTurnAgentLoop, ToolAgentLoop]
 
