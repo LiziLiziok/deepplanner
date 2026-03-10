@@ -1,0 +1,250 @@
+# Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2023-2024 SGLang Team
+# Copyright 2025 Search-R1 Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Adapted from https://github.com/PeterGriffinJin/Search-R1/blob/main/verl/utils/reward_score/qa_em.py
+
+import random
+import re
+import string
+import json
+import os  
+import logging
+from . import my_reward_final_answer
+logging.basicConfig(level=logging.INFO)
+
+SAVE_DIR = "/apdcephfs_szcf/share_303378293/hunyuan/eiraouyang/workplace/paper/verl/outputs/eval/deep_planner_agent_2"
+
+def read_number_and_word(txt_path: str) -> tuple:
+    """
+    Read the first line as a number and the second line as a word from a txt file.
+    
+    Args:
+        txt_path: Path to the txt file
+        
+    Returns:
+        A tuple of (number, word)
+    """
+    with open(txt_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    
+    # Read the number from the first line
+    number = int(lines[0].strip())
+    
+    # Read the word from the second line
+    word = lines[1].strip()
+    
+    return number, word 
+
+def save_results_to_file(res,data_source):
+    """Save the results to a file with a counter."""
+    # Add a counter to the generation part; here just read the counter
+    print(f"接下来开始保存结果")
+    try:
+        # Create output directory (including the full SAVE_DIR path)
+        os.makedirs(SAVE_DIR, exist_ok=True)
+        
+        count_file_path = SAVE_DIR + "/count.txt"
+        current_count = 0
+        suffix_ = "search_r1_0201"  # default suffix
+        
+        # Handle the counter file, read if it exists, create if not
+        if os.path.exists(count_file_path):
+            current_count, suffix_ = read_number_and_word(count_file_path)
+        else:
+            # Create a new counter file with default values
+            with open(count_file_path, 'w', encoding='utf-8') as f:
+                f.write('0\n')
+                f.write('search_r1_0201\n')
+                logging.info(f"Created new counter file: {count_file_path}")
+        print(f"((((((当前计数器值: {current_count}, 后缀: {suffix_})))))))")
+        # Save data to the new file
+        save_json = res        
+        json_line = json.dumps(save_json, ensure_ascii=False)
+        
+        if data_source.endswith("_val"):
+            json_file_path = f"{SAVE_DIR}/{current_count}_{suffix_}_val.jsonl"
+        else:
+            json_file_path = f"{SAVE_DIR}/{current_count}_{suffix_}_train.jsonl"
+        print(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&File saved: {json_file_path}")
+        # Write to the JSONL file
+        with open(json_file_path, 'a', encoding='utf-8') as f:
+            f.write(json_line + '\n')
+            # logging.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&File saved: {json_file_path}")
+        
+            
+    except (IOError, OSError) as e:
+        logging.error(f"################File write failed: {e}")
+    except Exception as e:
+        logging.error(f"################Unknown error: {e}")
+
+def normalize_answer(s):
+    def remove_articles(text):
+        return re.sub(r"\b(a|an|the)\b", " ", text)
+
+    def white_space_fix(text):
+        return " ".join(text.split())
+
+    def remove_punc(text):
+        exclude = set(string.punctuation)
+        return "".join(ch for ch in text if ch not in exclude)
+
+    def lower(text):
+        return text.lower()
+
+    return white_space_fix(remove_articles(remove_punc(lower(s))))
+
+
+def em_check(prediction, golden_answers):
+    if isinstance(golden_answers, str):
+        golden_answers = [golden_answers]
+    normalized_prediction = normalize_answer(prediction)
+    score = 0
+    for golden_answer in golden_answers:
+        golden_answer = normalize_answer(golden_answer)
+        if golden_answer == normalized_prediction:
+            score = 1
+            break
+    return score
+
+
+def subem_check(prediction, golden_answers):
+    if isinstance(golden_answers, str):
+        golden_answers = [golden_answers]
+    normalized_prediction = normalize_answer(prediction)
+    score = 0
+    for golden_answer in golden_answers:
+        golden_answer = normalize_answer(golden_answer)
+        if golden_answer in normalized_prediction:
+            score = 1
+            break
+    return score
+
+
+def extract_solution(solution_str):
+    """Extract the equation from the solution string."""
+    # Remove everything before the first "Assistant:"
+    # if "Assistant:" in solution_str:
+    #     solution_str = solution_str.split("Assistant:", 1)[1]
+    # elif "<|im_start|>assistant" in solution_str:
+    #     solution_str = solution_str.split("<|im_start|>assistant", 1)[1]
+    # else:
+    #     return None
+    # solution_str = solution_str.split('\n')[-1]
+
+    answer_pattern = r"<answer>(.*?)</answer>"
+    match = re.finditer(answer_pattern, solution_str, re.DOTALL)
+    matches = list(match)
+
+    # If there are 0  matches, return None
+    if len(matches) < 1:
+        return None
+
+    # If there are 2 or more matches, return the last one
+    return matches[-1].group(1).strip()
+
+
+def count_answer_tags(text):
+    opening_tags = text.count("<answer>")
+    closing_tags = text.count("</answer>")
+
+    return opening_tags, closing_tags
+
+
+def compute_score(solution_str, ground_truth,extra_info,data_source, method="strict", format_score=0.0, score=1.0):
+    """The scoring function for exact match (EM).
+
+    Args:
+        solution_str: the solution text
+        ground_truth: the ground truth
+        method: the method to extract the solution, choices are 'strict' and 'flexible'
+        format_score: the score for the format
+        score: the score for the correct answer
+    """
+    answer = extract_solution(solution_str=solution_str)
+    # answer = extra_info['final_answer']
+    open_count, close_count = count_answer_tags(solution_str)
+    do_print = random.randint(1, 64) == 1
+
+    if do_print:
+        print("#######--------------------------------#######")
+        print(f"Golden answers: {ground_truth['target']}")
+        print(f"agent answers: {extra_info['final_answer']}")
+        if answer is not None:
+            print(f"Extracted answer is not None: {answer}")
+        else:
+            print("Extracted answer: None!")
+        print("#######--------------------------------#######")
+    return_score = 0
+    em = ""
+
+    if answer is None:
+        return_score = 0
+        em = 0
+        f1 = 0
+
+    else:
+        em = em_check(answer, ground_truth["target"])
+        f1 = my_reward_final_answer.f1_check(answer, ground_truth["target"])
+        if em:
+            if open_count > 10 or close_count > 10:  # prevent output a lot of </answer>
+                return_score = score / 4
+            else:
+                return_score = score
+        else:
+            return_score = format_score
+    
+    res = {
+        "question": extra_info["question"],
+        "trajectory": extra_info["response_text"],
+        "solution_str": solution_str,
+        "ground_truth": ground_truth["target"],
+        # "extract_answer": answer,
+        "from_agent_answer": extra_info["final_answer"],
+        "f1": f1,
+        "em": em,
+        "return_score": return_score,
+        "data_source": data_source,
+    }
+    save_results_to_file(res,data_source)
+    return return_score
+    
+
+
+def compute_score_subem(solution_str, ground_truth, method="strict", format_score=0.0, score=1.0):
+    """The scoring function for substring exact match (EM).
+
+    Args:
+        solution_str: the solution text
+        ground_truth: the ground truth
+        method: the method to extract the solution, choices are 'strict' and 'flexible'
+        format_score: the score for the format
+        score: the score for the correct answer
+    """
+    answer = extract_solution(solution_str=solution_str)
+    do_print = random.randint(1, 64) == 1
+
+    if do_print:
+        print("--------------------------------")
+        print(f"Golden answers: {ground_truth['target']}")
+        print(f"Extracted answer: {answer}")
+        print(f"Solution string: {solution_str}")
+
+    if answer is None:
+        return 0
+    else:
+        if subem_check(answer, ground_truth["target"]):
+            return score
+        else:
+            return format_score
