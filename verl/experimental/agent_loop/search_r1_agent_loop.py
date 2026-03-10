@@ -54,6 +54,8 @@ ANSWER_TAG_OPEN = "<answer>"
 ANSWER_TAG_CLOSE = "</answer>"
 THINK_TAG_OPEN = "<think>"
 THINK_TAG_CLOSE = "</think>"
+target_sequences = ["</search>", " </search>", "</search>\n", " </search>\n", "</search>\n\n", " </search>\n\n"]
+curr_eos = [151645, 151643]
 
 # Log directory for agent loop
 AGENT_LOOP_LOG_DIR = "/apdcephfs_szcf/share_303378293/hunyuan/eiraouyang/workplace/paper/verl/logs/agent_loop"
@@ -61,6 +63,14 @@ AGENT_LOOP_LOG_DIR = "/apdcephfs_szcf/share_303378293/hunyuan/eiraouyang/workpla
 # Debug log directory for detailed processing trace
 DEBUG_LOG_DIR = "/apdcephfs_szcf/share_303378293/hunyuan/eiraouyang/workplace/paper/verl/logs/search-r1-agent-loop-log"
 
+def get_query(text):
+    import re
+    pattern = re.compile(r"<search>(.*?)</search>", re.DOTALL)
+    matches = pattern.findall(text)
+    if matches:
+        return matches[-1]
+    else:
+        return None
 
 @register("search_r1_agent")
 class SearchR1AgentLoop(AgentLoopBase):
@@ -88,7 +98,8 @@ class SearchR1AgentLoop(AgentLoopBase):
         cls.tokenizer = tokenizer
         cls.processor = processor
         cls.prompt_length = config.actor_rollout_ref.rollout.prompt_length
-        cls.response_length = config.actor_rollout_ref.rollout.response_length
+        # cls.response_length = config.actor_rollout_ref.rollout.response_length
+        cls.response_length = 5000
         
         # Multi-turn config
         cls.max_search_turns = getattr(
@@ -105,8 +116,124 @@ class SearchR1AgentLoop(AgentLoopBase):
         
         # Chat template kwargs
         cls.apply_chat_template_kwargs = config.data.get("apply_chat_template_kwargs", {})
-    
+
     async def run(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
+        messages = list(kwargs["raw_prompt"])
+        question_ = messages[-1]["content"] 
+        prompt =  messages
+        generation_sampling_params = {
+            # **sampling_params,
+            "temperature": 0.7,
+            "max_new_tokens": 1024,
+            "stop": target_sequences  # Use the global target_sequences
+        }
+        response_mask=[]
+        cnt=0
+        request_id = uuid4().hex
+        tools_kwargs = kwargs.get("tools_kwargs", {})
+        response_ids = []
+        # response_logprobs=[]
+        while cnt < self.max_search_turns:
+            if cnt==0:
+                prompt_ids = await self.loop.run_in_executor(
+                    None,
+                    lambda: self.tokenizer.apply_chat_template(
+                        prompt,
+                        add_generation_prompt=True,
+                        tokenize=True,
+                        **self.apply_chat_template_kwargs,
+                    ),
+                )
+                input_prompt_ids = prompt_ids[:]
+            else:
+                prompt_ids = await self.loop.run_in_executor(
+                    None,
+                    lambda: self.tokenizer.encode(prompt, skip_special_tokens=True)
+                )
+            
+            outputs = await self.server_manager.generate(
+                request_id=f"{request_id}_turn_{cnt}",
+                prompt_ids=prompt_ids,
+                sampling_params=generation_sampling_params,
+            ) 
+  
+            outputs = outputs.token_ids
+            
+
+            if outputs[-1].item() in curr_eos:
+                generated_tokens = outputs[prompt_ids.shape[1]:]
+                response_ids.extend(generated_tokens)
+                response_mask.extend([1] * len(generated_tokens))
+                
+                generated_text = await self.loop.run_in_executor(
+                    None,
+                    lambda: self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                )
+                
+                break
+
+            generated_tokens = outputs[prompt_ids.shape[1]:]
+            
+            generated_text = await self.loop.run_in_executor(
+                    None,
+                    lambda: self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                )
+            
+            all_output_text = await self.loop.run_in_executor(
+                    None,
+                    lambda: self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+                )
+
+            tmp_query = get_query(all_output_text)
+            if tmp_query:
+                # print(f'searching "{tmp_query}"...')
+                search_results = await self._call_retrieval_tool(
+                        tmp_query, 
+                        tools_kwargs
+                    )
+            else:
+                search_results = ''
+
+            prompt+=f'\n\n{generated_text}'
+            response_ids.extend(generated_tokens)
+            response_mask.extend([1] * len(generated_tokens))
+            prompt+=f'<information>{search_results}</information>\n\n'
+            _ids = await self.loop.run_in_executor(
+                None,
+                lambda: self.tokenizer.encode(f'<information>{search_results}</information>\n\n', skip_special_tokens=True)
+            )            
+            response_ids.extend(_ids)
+            response_mask.extend([0] * len(_ids))
+            cnt += 1
+        
+
+        agent_loop_metrics = AgentLoopMetrics(
+            generate_sequences=metrics.get("generate_sequences", 0.0),
+            tool_calls=metrics.get("tool_calls", 0.0),
+        )
+        
+        # Build output
+        output = AgentLoopOutput(
+            prompt_ids=input_prompt_ids,
+            response_ids=response_ids,
+            response_mask=response_mask,
+            response_logprobs=response_logprobs if response_logprobs else None,
+            num_turns=cnt * 2,  # Each turn has LLM response + retrieval
+            metrics=agent_loop_metrics,
+            extra_fields={
+                "found_answer": found_answer,
+                "search_turns": search_turn,
+                "question": question_,
+                "response_text": self.tokenizer.decode(response_ids, skip_special_tokens=True),
+            },
+        )
+
+
+
+
+
+
+    async def run_2(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
         """
         Run the Search-R1 style agent loop.
         
@@ -122,6 +249,7 @@ class SearchR1AgentLoop(AgentLoopBase):
         """
         messages = list(kwargs["raw_prompt"])
         question_ = messages[-1]["content"]
+        
 
         request_id = uuid4().hex
         metrics = {}
@@ -147,7 +275,9 @@ class SearchR1AgentLoop(AgentLoopBase):
         prompt_ids = await self.loop.run_in_executor(
             None,
             lambda: self.tokenizer.apply_chat_template(
-                messages,
+                [   {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": question_}
+                ],
                 add_generation_prompt=True,
                 tokenize=True,
                 **self.apply_chat_template_kwargs,
