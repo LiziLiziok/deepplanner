@@ -21,6 +21,8 @@
 
 
 """
+import sys 
+sys.path.append("/apdcephfs_szcf/share_303378293/hunyuan/eiraouyang/workplace/paper/verl")
 import asyncio
 import json
 import re
@@ -74,9 +76,9 @@ class PlannerAgentLoop(AgentLoopBase):
         print(f"Initialized tools: {cls.tools}")
         
         # Load custom prompts
-        planner_system_prompt_path = "verl/experimental/agent_loop/prompt/planner.md"
-        retrieval_system_prompt_path = "verl/experimental/agent_loop/prompt/retrieval.md"
-        solver_system_prompt_path = "verl/experimental/agent_loop/prompt/solver.md"
+        planner_system_prompt_path = "/apdcephfs_szcf/share_303378293/hunyuan/eiraouyang/workplace/paper/verl/verl/experimental/agent_loop/prompt/planner.md"
+        retrieval_system_prompt_path = "/apdcephfs_szcf/share_303378293/hunyuan/eiraouyang/workplace/paper/verl/verl/experimental/agent_loop/prompt/retrieval.md"
+        solver_system_prompt_path = "/apdcephfs_szcf/share_303378293/hunyuan/eiraouyang/workplace/paper/verl/verl/experimental/agent_loop/prompt/solver.md"
         with open(planner_system_prompt_path, 'r') as f:
             cls.planner_system_prompt = f.read().strip()
         with open(retrieval_system_prompt_path, 'r') as f:
