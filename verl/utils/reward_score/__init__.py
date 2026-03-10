@@ -14,6 +14,61 @@
 # from . import gsm8k, math, prime_math, prime_code
 
 from verl.utils.import_utils import deprecated
+import logging
+import re
+import string
+import random
+import json
+import os
+logging.basicConfig(level=logging.INFO)
+
+
+# def _parse_extra_info(extra_info):
+
+def save_results_to_file(solution_str, ground_truths, res, data_source=None,extra_info=None):
+    """Save the results to a file with a counter."""
+    # Add a counter to the generation part; here just read the counter
+    try:
+        # Create output directory
+        os.makedirs(os.path.dirname("./outputs/eval/"), exist_ok=True)
+        
+        count_file_path = "./outputs/eval/count.txt"
+        current_count = 0
+        
+        # # Handle the counter file, read if it exists (usually it does)
+        if os.path.exists(count_file_path):
+            with open(count_file_path, 'r', encoding='utf-8') as f:
+                count_str = f.read().strip()
+                if count_str.isdigit():
+                    current_count = int(count_str)
+        else:
+             # Create a new counter file
+            with open(count_file_path, 'w', encoding='utf-8') as f:
+                f.write('0')
+                logging.info("Created new counter file: count.txt")
+        
+        # Generate the file name with the counter
+        json_file_path = f"./outputs/eval/train_{current_count}.jsonl"
+        
+        # Save data to the new file
+        save_json = {
+            "solution_str": solution_str,
+            "ground_truths": ground_truths,
+            "res": res,
+            "data_source":data_source,
+        }
+        json_line = json.dumps(save_json, ensure_ascii=False)
+        
+        # Write to the JSONL file
+        with open(json_file_path, 'a', encoding='utf-8') as f:
+            f.write(json_line + '\n')
+            logging.info(f"File saved: {json_file_path}")
+        
+            
+    except (IOError, OSError) as e:
+        logging.error(f"File write failed: {e}")
+    except Exception as e:
+        logging.error(f"Unknown error: {e}")
 
 
 def default_compute_score(
@@ -90,21 +145,24 @@ def default_compute_score(
         from . import geo3k
 
         res = geo3k.compute_score(solution_str, ground_truth)
-    elif data_source in [
-        "searchR1_nq",
-        "searchR1_triviaqa",
-        "searchR1_popqa",
-        "searchR1_hotpotqa",
-        "searchR1_2wikimultihopqa",
-        "searchR1_musique",
-        "searchR1_bamboogle",
-    ]:
-        from . import search_r1_like_qa_em
-
-        res = search_r1_like_qa_em.compute_score(solution_str, ground_truth)
-
+        
+    # /apdcephfs_szcf/share_303378293/hunyuan/eiraouyang/workplace/paper/verl/data/searchR1_processed_direct/test_new_search_r1.parquet
     else:
-        raise NotImplementedError(f"Reward function is not implemented for {data_source=}")
+        # from . import search_r1_like_qa_em
+        # res = search_r1_like_qa_em.compute_score(solution_str, ground_truth,extra_info,data_source) 
+        from . import search_r1_like_qa_em_my
+        res = search_r1_like_qa_em_my.compute_score(solution_str, ground_truth,extra_info,data_source)                
+    # elif data_source.startswith("search_r1"):
+    #     from . import search_r1_like_qa_em
+    #     res = search_r1_like_qa_em.compute_score(solution_str, ground_truth,extra_info,data_source)
+    # elif data_source.endswith("_val"):
+    #     from . import my_reward_final_answer
+    #     res = my_reward_final_answer.compute_score(solution_str, ground_truth,extra_info,data_source)
+    # elif data_source.endswith("_train"):
+    #     from . import my_reward_final_answer
+    #     res = my_reward_final_answer.compute_score(solution_str, ground_truth,extra_info,data_source)
+    # else:
+    #     raise NotImplementedError(f"Reward function is not implemented for {data_source=}")
 
     if isinstance(res, dict):
         return res
