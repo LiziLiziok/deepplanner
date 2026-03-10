@@ -15,9 +15,11 @@
 from .agent_loop import AgentLoopBase, AgentLoopManager, AgentLoopWorker, AsyncLLMServerManager
 from .single_turn_agent_loop import SingleTurnAgentLoop
 from .tool_agent_loop import ToolAgentLoop
-from .search_r1_agent_loop import SearchR1AgentLoop
 from .my_agent_loop import PlannerAgentLoop
+from .search_r1_agent_loop import SearchR1AgentLoop
+from .search_r1_agent_loop_0201 import SearchR1AgentLoop_0201
+from .my_agent_loop_2 import PlannerAgentLoop_2
 
-_ = [SingleTurnAgentLoop, ToolAgentLoop]
+_ = [SingleTurnAgentLoop, ToolAgentLoop, PlannerAgentLoop, SearchR1AgentLoop, SearchR1AgentLoop_0201, PlannerAgentLoop_2]
 
 __all__ = ["AgentLoopBase", "AgentLoopManager", "AsyncLLMServerManager", "AgentLoopWorker"]
