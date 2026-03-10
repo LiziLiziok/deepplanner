@@ -1,3 +1,32 @@
+在 `/verl/tools/` 目录下创建你的工具文件，例如 `my_custom_tool.py`：
+class MyCustomTool(BaseTool)中MyCustomTool的名字是指向关键
+
+在 `examples/sglang_multiturn/config/tool_config/` 目录下创建 `my_custom_tool_config.yaml`：
+
+```yaml
+tools:
+  - class_name: verl.tools.my_custom_tool.MyCustomTool  # 工具类的完整路径
+    config:
+      api_url: http://127.0.0.1:8000/api  # 你的配置参数
+      timeout: 30
+      type: native  # native 或 mcp
+    tool_schema:
+      type: function
+      function:
+        name: my_tool  # 工具名称（用于 self.tools["my_tool"]）
+        description: 这是我的自定义工具，用于xxx功能
+        parameters:
+          type: object
+          properties:
+            query:  # 参数名称
+              type: string
+              description: 查询字符串
+            options:  # 可选参数
+              type: object
+              description: 额外选项
+          required:
+            - query  # 必需参数列表
+```
 # 如何定义新 Tool 并集成到 PlannerAgentLoop
 
 ## 📋 完整流程概览
