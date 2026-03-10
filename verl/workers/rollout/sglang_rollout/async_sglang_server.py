@@ -194,21 +194,8 @@ class SGLangHttpServer:
             )
         )
         app.is_single_tokenizer_mode = True
-
-        # Set warmup_thread_args to avoid AttributeError in lifespan function
-        app.warmup_thread_args = (
-            server_args,
-            None,
-            None,
-        )
-
-        # Manually add Prometheus middleware before starting server
-        # This ensures /metrics endpoint is available immediately
-        if server_args.enable_metrics:
-            from sglang.srt.utils.common import add_prometheus_middleware
-
-            add_prometheus_middleware(app)
-
+        app.server_args = server_args
+        app.warmup_thread_args = (server_args, None, None)
         self._server_port, self._server_task = await run_unvicorn(app, server_args, self._server_address)
         self.tokenizer_manager.server_status = ServerStatus.Up
 
@@ -248,7 +235,10 @@ class SGLangHttpServer:
         # TODO(@wuxibin): switch to `/generate` http endpoint once multi-modal support ready.
         max_new_tokens = min(self.config.response_length, self.config.max_model_len - len(prompt_ids) - 1)
         sampling_params["max_new_tokens"] = max_new_tokens
-        return_logprob = sampling_params.pop("logprobs", False)
+        print(f"@@@@@@@@max_new_tokens: {max_new_tokens}@@@@@@@@@len(prompt_ids): {len(prompt_ids)}@@@@@@@@@max_model_len:{max_model_len}")
+        # 写死
+        sampling_params["max_new_tokens"] = 1024
+        return_logprob = sampling_params.pop("logprobs", True)
 
         request = GenerateReqInput(
             rid=request_id,
@@ -258,6 +248,7 @@ class SGLangHttpServer:
             image_data=image_data,
         )
         output = await self.tokenizer_manager.generate_request(request, None).__anext__()
+       
         if return_logprob:
             output_token_logprobs = output["meta_info"]["output_token_logprobs"]
             log_probs, token_ids = zip(
