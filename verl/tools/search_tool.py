@@ -113,7 +113,6 @@ def init_search_execution_pool(
     else:
         raise NotImplementedError("Process mode is not implemented yet")
 
-
 class SearchTool(BaseTool):
     """Search tool for retrieving information using external retrieval services.
 
