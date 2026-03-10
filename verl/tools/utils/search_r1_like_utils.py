@@ -15,10 +15,12 @@
 
 import json
 import logging
+import os
 import threading
 import time
 import traceback
 import uuid
+from datetime import datetime
 from typing import Any, Optional
 
 import requests
@@ -28,7 +30,48 @@ MAX_RETRIES = 10
 INITIAL_RETRY_DELAY = 1
 API_TIMEOUT = 10
 
+# Log file path for client search logs
+CLIENT_SEARCH_LOG_DIR = "/apdcephfs_szcf/share_303378293/hunyuan/eiraouyang/workplace/paper/verl/logs/client_search_log"
+
 logger = logging.getLogger(__name__)
+
+# Lock for thread-safe file writing
+_log_file_lock = threading.Lock()
+
+
+def _save_search_log_to_jsonl(api_response: Any, result_text: str, metadata: dict[str, Any]) -> None:
+    """
+    Save api_response, result_text and metadata to a JSONL file.
+    
+    Args:
+        api_response: The raw API response.
+        result_text: The formatted result text.
+        metadata: The metadata dictionary.
+    """
+    try:
+        # Ensure log directory exists
+        os.makedirs(CLIENT_SEARCH_LOG_DIR, exist_ok=True)
+        
+        # Create log entry with timestamp
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "api_response": api_response,
+            "result_text": result_text,
+            "metadata": metadata
+        }
+        
+        # Generate log file name with date
+        log_file_name = f"search_log_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        log_file_path = os.path.join(CLIENT_SEARCH_LOG_DIR, log_file_name)
+        
+        # Thread-safe write to JSONL file
+        with _log_file_lock:
+            with open(log_file_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+        
+        logger.debug(f"Search log saved to {log_file_path}")
+    except Exception as e:
+        logger.warning(f"Failed to save search log: {e}")
 
 
 def call_search_api(
@@ -241,5 +284,8 @@ def perform_single_search_batch(
             {"result": "Unknown API state (no response and no error message)."}, ensure_ascii=False
         )
         logger.error("Batch search: Unknown API state.")
+
+    # Save log to JSONL file
+    _save_search_log_to_jsonl(api_response, result_text, metadata)
 
     return result_text, metadata
